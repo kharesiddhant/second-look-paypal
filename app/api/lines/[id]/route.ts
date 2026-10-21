@@ -17,8 +17,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (fix.action === 'drop') {
       db().prepare('UPDATE lines SET dropped = 1, fix_applied = 1 WHERE id = ?').run(line.id);
     } else {
-      const col = { email: 'email', amount: 'amount', currency: 'currency' }[fix.field]; // whitelist, never raw input
-      db().prepare(`UPDATE lines SET ${col} = ?, fix_applied = 1 WHERE id = ?`).run(fix.value, line.id);
+      for (const c of fix.changes) {
+        const col = { email: 'email', amount: 'amount', currency: 'currency' }[c.field]; // whitelist, never raw input
+        if (!col) return Response.json({ error: `Unknown field ${c.field}` }, { status: 400 });
+        db().prepare(`UPDATE lines SET ${col} = ? WHERE id = ?`).run(c.value, line.id);
+      }
+      db().prepare('UPDATE lines SET fix_applied = 1 WHERE id = ?').run(line.id);
     }
   } else if (action === 'override') {
     if (line.verdict !== 'block') return Response.json({ error: 'Only block lines need an override' }, { status: 400 });

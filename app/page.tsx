@@ -8,7 +8,8 @@ type Data = { batch: Batch; lines: Line[]; payouts: Payout[]; canSend: boolean }
 
 const FINAL = ['SUCCESS', 'DENIED', 'CANCELED'];
 
-const fixLabel = (f: Fix) => (f.action === 'drop' ? 'Drop line' : `Set ${f.field} to ${f.value}`);
+const fixLabel = (f: Fix) =>
+  f.action === 'drop' ? 'Drop line' : `Set ${f.changes.map(c => `${c.field} to ${c.value}`).join(', ')}`;
 
 export default function Page() {
   const [id, setId] = useState<string | null>(null);

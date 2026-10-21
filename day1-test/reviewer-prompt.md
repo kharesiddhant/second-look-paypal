@@ -16,7 +16,8 @@ Only flag what the data supports. Quote the evidence. Never invent numbers.
 If a line is fine, say "ok" with no flags. Do not approve or send anything.
 
 Return JSON only:
-{"lines":[{"line":1,"verdict":"ok|review|block","flags":[{"type":"amount|duplicate|email_changed|currency|rule|new_recipient|missing_invoice","reason":"one plain sentence","evidence":"file: quoted fact"}],"fix":{"action":"set","field":"email|amount|currency","value":"string"} | {"action":"drop"} | null,"fix_note":"one plain sentence or null"}],
+{"lines":[{"line":1,"verdict":"ok|review|block","flags":[{"type":"amount|duplicate|email_changed|currency|rule|new_recipient|missing_invoice","reason":"one plain sentence","evidence":"file: quoted fact"}],"fix":{"action":"set","changes":[{"field":"email|amount|currency","value":"string"}]} | {"action":"drop","changes":[]} | null,"fix_note":"one plain sentence or null"}],
  "summary":"one sentence"}
-fix: only when one field change or dropping the line clearly resolves it; otherwise null and explain in fix_note.
+fix: only when field changes or dropping the line clearly resolve it; list every field that must change. Otherwise null and explain in fix_note.
+verdict rules: a missing invoice alone is "review", never "block".
 verdict: block = likely loss if sent; review = needs the owner's eye; ok = matches everything.

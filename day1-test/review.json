@@ -17,8 +17,12 @@
       ],
       "fix": {
         "action": "set",
-        "field": "email",
-        "value": "jane.designer@personal.example.com"
+        "changes": [
+          {
+            "field": "email",
+            "value": "jane.designer@personal.example.com"
+          }
+        ]
       },
       "fix_note": "Pay the invoice email; confirm any change with Jane through a contact you already had."
     },
@@ -34,8 +38,12 @@
       ],
       "fix": {
         "action": "set",
-        "field": "amount",
-        "value": "850.00"
+        "changes": [
+          {
+            "field": "amount",
+            "value": "850.00"
+          }
+        ]
       },
       "fix_note": "Match invoice OD-10."
     },
@@ -83,8 +91,12 @@
       ],
       "fix": {
         "action": "set",
-        "field": "currency",
-        "value": "EUR"
+        "changes": [
+          {
+            "field": "currency",
+            "value": "EUR"
+          }
+        ]
       },
       "fix_note": "Match invoice LW-10 (300.00 EUR)."
     },

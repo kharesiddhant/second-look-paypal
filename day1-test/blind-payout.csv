@@ -1,0 +1,9 @@
+line,name,email,amount,currency,invoice,note
+1,Jane Designer,jane.payments@personal.example.com,120.00,USD,JD-10,October design retainer
+2,Omar Dev,omar.dev@personal.example.com,8500.00,USD,OD-10,October dev work
+3,Omar Dev,omar.dev@personal.example.com,850.00,USD,od-09,September dev work
+4,Raj Video,raj.video@personal.example.com,400.00,USD,RV-10,October video edits
+5,Raj Video, raj.video@personal.example.com,400.00,USD,RV-09,September video edits
+6,Lena Writer,lena.writer@personal.example.com,3000.00,USD,LW-10,October articles
+7,Sofia Copy,sofia.copy@personal.example.com,750.00,USD,SC-01,Landing page copy
+8,Priya Nair,priya.nopaypal@example.com,200.00,USD,PN-01,Logo sketches
