@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS lines (
   payout_item_id TEXT, status TEXT, error TEXT, paypal_batch_id TEXT
 );
 CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, type TEXT, received_at TEXT);
+-- Reviews keyed by a hash of everything sent to the model, so identical requests are not paid for twice.
+CREATE TABLE IF NOT EXISTS reviews (key TEXT PRIMARY KEY, review TEXT, created_at TEXT);
 `);
 // Column added after the first schema; no-op on new databases.
 try { db.exec('ALTER TABLE lines ADD COLUMN paypal_batch_id TEXT'); } catch {}

@@ -2,7 +2,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { db } from './db';
+import { buildFacts } from './facts';
 
 export type Change = { field: 'email' | 'amount' | 'currency'; value: string };
 export type Fix = { action: 'set'; changes: Change[] } | { action: 'drop' };
@@ -11,6 +13,7 @@ export type LineReview = { line: number; verdict: 'ok' | 'review' | 'block'; fla
 export type Review = { lines: LineReview[]; summary: string };
 
 const MODEL = 'claude-sonnet-5-5';
+const EFFORT = 'medium'; // was high; compare quality on payout.csv and blind-payout.csv
 
 // Flat fix shape for the model; normalised to Fix below.
 const ReviewSchema = z.object({
@@ -29,33 +32,41 @@ const ReviewSchema = z.object({
 
 // ponytail: inputs are the fixed day1-test files; rules and invoices move to owner uploads in the depth phase.
 export async function reviewBatch(csv: string): Promise<Review> {
-  const history = (db().prepare('SELECT * FROM history ORDER BY date').all() as Record<string, string>[])
-    .map(r => [r.date, r.name, r.email, r.amount, r.currency, r.invoice].join(','));
+  // Test mode: no AI call. The saved review only matches day1-test/payout.csv.
+  if (process.env.REVIEW_MODE === 'stub') return JSON.parse(readFileSync('day1-test/review.json', 'utf8'));
+
+  const history = db().prepare('SELECT * FROM history ORDER BY date').all() as Record<string, string>[];
+  const system = readFileSync('day1-test/reviewer-prompt.md', 'utf8');
+  const content = [
+    `<lines>\n${buildFacts(csv, history, readFileSync('day1-test/invoices.txt', 'utf8'))}\n</lines>`,
+    `<rules>\n${readFileSync('day1-test/rules.txt', 'utf8')}\n</rules>`,
+  ].join('\n\n');
+
+  // Same CSV, prompt, history, invoices, rules, model and effort: reuse the stored review.
+  const key = createHash('sha256').update([MODEL, EFFORT, system, content].join('\0')).digest('hex');
+  const cached = db().prepare('SELECT review FROM reviews WHERE key = ?').get(key) as { review: string } | undefined;
+  if (cached) {
+    console.log('review reused from cache');
+    return JSON.parse(cached.review);
+  }
 
   const response = await new Anthropic().beta.messages.parse({
     model: MODEL,
     max_tokens: 16000,
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
-    output_config: { effort: 'high', format: betaZodOutputFormat(ReviewSchema) },
-    system: readFileSync('day1-test/reviewer-prompt.md', 'utf8'),
-    messages: [{
-      role: 'user',
-      content: [
-        `<payout.csv>\n${csv}\n</payout.csv>`,
-        `<history.csv>\ndate,name,email,amount,currency,invoice\n${history.join('\n')}\n</history.csv>`,
-        `<invoices.txt>\n${readFileSync('day1-test/invoices.txt', 'utf8')}\n</invoices.txt>`,
-        `<rules.txt>\n${readFileSync('day1-test/rules.txt', 'utf8')}\n</rules.txt>`,
-      ].join('\n\n'),
-    }],
+    output_config: { effort: EFFORT, format: betaZodOutputFormat(ReviewSchema) },
+    system,
+    messages: [{ role: 'user', content }],
   });
+  console.log(`review usage: model=${response.model} effort=${EFFORT} in=${response.usage.input_tokens} out=${response.usage.output_tokens}`);
 
   if (response.stop_reason === 'refusal') throw new Error('Model declined the review');
   if (response.stop_reason === 'max_tokens') throw new Error('Review was cut off');
   const out = response.parsed_output;
   if (!out) throw new Error('Review output did not match the schema');
 
-  return {
+  const review: Review = {
     summary: out.summary,
     lines: out.lines.map(l => ({
       ...l,
@@ -64,4 +75,6 @@ export async function reviewBatch(csv: string): Promise<Review> {
         : null,
     })),
   };
+  db().prepare('INSERT OR REPLACE INTO reviews VALUES (?, ?, ?)').run(key, JSON.stringify(review), new Date().toISOString());
+  return review;
 }
