@@ -1,0 +1,129 @@
+{
+  "lines": [
+    {
+      "line": 1,
+      "verdict": "block",
+      "flags": [
+        {
+          "type": "email_changed",
+          "reason": "Payment email differs from the one on Jane's invoice and from all six past payouts; the change request came from an unfamiliar domain.",
+          "evidence": "invoices.txt: JD-10 'Pay to PayPal: jane.designer@personal.example.com'; history.csv: 6 payouts to jane.designer@personal.example.com; invoices.txt: change request from jane.designer.studio@gmail-mail.co"
+        },
+        {
+          "type": "rule",
+          "reason": "Breaks rule 4: payment email must match the invoice.",
+          "evidence": "rules.txt: rule 4"
+        }
+      ],
+      "fix": {
+        "action": "set",
+        "field": "email",
+        "value": "jane.designer@personal.example.com"
+      },
+      "fix_note": "Pay the invoice email; confirm any change with Jane through a contact you already had."
+    },
+    {
+      "line": 2,
+      "verdict": "block",
+      "flags": [
+        {
+          "type": "amount",
+          "reason": "Amount is 10 times the invoice and 10 times every past payout to Omar.",
+          "evidence": "invoices.txt: OD-10 'Total 850.00 USD'; history.csv: 6 payouts of 850.00 USD"
+        }
+      ],
+      "fix": {
+        "action": "set",
+        "field": "amount",
+        "value": "850.00"
+      },
+      "fix_note": "Match invoice OD-10."
+    },
+    {
+      "line": 3,
+      "verdict": "block",
+      "flags": [
+        {
+          "type": "duplicate",
+          "reason": "Invoice od-09 is OD-09, already paid on 2026-09-30.",
+          "evidence": "history.csv: '2026-09-30,Omar Dev,...,850.00,USD,OD-09'"
+        },
+        {
+          "type": "rule",
+          "reason": "Breaks rule 2: this would be Omar's second payment this month.",
+          "evidence": "payout.csv: lines 2 and 3 both pay omar.dev@personal.example.com"
+        }
+      ],
+      "fix": {
+        "action": "drop"
+      },
+      "fix_note": "OD-09 was already paid on 2026-09-30."
+    },
+    {
+      "line": 4,
+      "verdict": "ok",
+      "flags": [],
+      "fix": null,
+      "fix_note": null
+    },
+    {
+      "line": 5,
+      "verdict": "review",
+      "flags": [
+        {
+          "type": "currency",
+          "reason": "Line pays USD, but Lena's invoice and all past payouts are in EUR.",
+          "evidence": "invoices.txt: LW-10 'Total 300.00 EUR'; history.csv: 6 payouts in EUR"
+        },
+        {
+          "type": "rule",
+          "reason": "Breaks rule 3: pay in the currency on the invoice.",
+          "evidence": "rules.txt: rule 3"
+        }
+      ],
+      "fix": {
+        "action": "set",
+        "field": "currency",
+        "value": "EUR"
+      },
+      "fix_note": "Match invoice LW-10 (300.00 EUR)."
+    },
+    {
+      "line": 6,
+      "verdict": "review",
+      "flags": [
+        {
+          "type": "new_recipient",
+          "reason": "First payment to Sofia; we cannot confirm before sending that the email has a PayPal account.",
+          "evidence": "history.csv: no rows for sofia.copy@personal.example.com"
+        },
+        {
+          "type": "rule",
+          "reason": "Breaks rule 1: 750.00 USD is over the 500 limit for a first-time recipient.",
+          "evidence": "rules.txt: rule 1; invoices.txt: SC-01 'Total 750.00 USD'"
+        }
+      ],
+      "fix": null,
+      "fix_note": "Approve explicitly, or pay 500.00 now and the rest after the first payout clears."
+    },
+    {
+      "line": 7,
+      "verdict": "review",
+      "flags": [
+        {
+          "type": "missing_invoice",
+          "reason": "No invoice received for PN-01.",
+          "evidence": "invoices.txt: '(No invoice received for PN-01.)'"
+        },
+        {
+          "type": "new_recipient",
+          "reason": "First payment to Priya; we cannot confirm before sending that the email has a PayPal account.",
+          "evidence": "history.csv: no rows for priya.nopaypal@example.com"
+        }
+      ],
+      "fix": null,
+      "fix_note": "Hold until Priya sends an invoice."
+    }
+  ],
+  "summary": "3 lines blocked, 3 need review, 1 ok; the blocks stop 8,620 USD from going out wrong (120 to a likely scammer, 7,650 overpaid, 850 paid twice)."
+}

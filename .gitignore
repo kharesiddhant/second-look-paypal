@@ -1,0 +1,8 @@
+node_modules/
+.next/
+data/
+.env*
+next-env.d.ts
+*.tsbuildinfo
+hackathon-playbook.html
+package-lock.json
