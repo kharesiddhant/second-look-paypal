@@ -1,4 +1,4 @@
-import { db } from '@/lib/db';
+import { db, setItemStatus } from '@/lib/db';
 import { verifyWebhook } from '@/lib/paypal';
 
 // PayPal payout webhooks. Verified, de-duplicated by event id, matched by sender_item_id (= our line id).
@@ -14,8 +14,7 @@ export async function POST(req: Request) {
 
   const r = event.resource;
   if (event.resource_type === 'payouts_item') {
-    db().prepare('UPDATE lines SET payout_item_id = ?, status = ?, error = ? WHERE id = ?')
-      .run(r.payout_item_id, r.transaction_status, r.errors?.message ?? null, Number(r.payout_item.sender_item_id));
+    setItemStatus(Number(r.payout_item.sender_item_id), r.payout_item_id, r.transaction_status, r.errors?.message ?? null);
   } else if (event.resource_type === 'payouts') {
     db().prepare('UPDATE payouts SET status = ? WHERE paypal_batch_id = ?')
       .run(r.batch_header.batch_status, r.batch_header.payout_batch_id);

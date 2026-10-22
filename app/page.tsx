@@ -4,7 +4,11 @@ import { useEffect, useState } from 'react';
 import type { Batch, Line, Payout } from '@/lib/db';
 import type { Fix, Flag } from '@/lib/review';
 
-type Data = { batch: Batch; lines: Line[]; payouts: Payout[]; canSend: boolean };
+type Suggestion = { email: string; source: string } | null;
+type Data = {
+  batch: Batch; lines: Line[]; payouts: Payout[]; canSend: boolean;
+  suggestions: Record<number, Suggestion>; resent: number[]; nudgeHours: number;
+};
 
 const FINAL = ['SUCCESS', 'DENIED', 'CANCELED'];
 
@@ -45,6 +49,10 @@ export default function Page() {
 
   async function act(lineId: number, action: string, reason?: string) {
     if (await call(`/api/lines/${lineId}`, { action, reason })) load();
+  }
+
+  async function unclaimed(lineId: number, action: 'cancel' | 'resend', email?: string) {
+    if (await call(`/api/lines/${lineId}/unclaimed`, { action, email })) load();
   }
 
   async function send() {
@@ -133,7 +141,11 @@ export default function Page() {
                     </td>
                     <td>
                       {l.status ?? '–'}
-                      {l.error && <p><small>{l.error}</small></p>}
+                      {l.error && l.status !== 'RETURNED' && <p><small>{l.error}</small></p>}
+                      {(l.status === 'UNCLAIMED' || l.status === 'RETURNED') && !data.resent.includes(l.id) && (
+                        <Unclaimed line={l} suggestion={data.suggestions[l.id] ?? null} nudgeHours={data.nudgeHours} busy={busy} onAct={unclaimed} />
+                      )}
+                      {data.resent.includes(l.id) && <p><small>Resent, see the line below</small></p>}
                     </td>
                   </tr>
                 );
@@ -150,5 +162,37 @@ export default function Page() {
         </>
       )}
     </main>
+  );
+}
+
+// Cancel or resend an unclaimed payout. Money never moves without a click and a confirm.
+function Unclaimed({ line, suggestion, nudgeHours, busy, onAct }: {
+  line: Line; suggestion: Suggestion; nudgeHours: number; busy: boolean;
+  onAct: (lineId: number, action: 'cancel' | 'resend', email?: string) => void;
+}) {
+  const [email, setEmail] = useState(suggestion?.email ?? '');
+  const hours = line.unclaimed_since ? (Date.now() - Date.parse(line.unclaimed_since)) / 36e5 : 0;
+  const amount = `${line.amount} ${line.currency}`;
+  return (
+    <div>
+      {line.status === 'UNCLAIMED' && hours >= nudgeHours && (
+        <p role="status">Still unclaimed after {hours < 1 ? `${Math.round(hours * 60)} min` : `${Math.round(hours)} h`}</p>
+      )}
+      {line.status === 'UNCLAIMED' && (
+        <button disabled={busy} onClick={() => confirm(`Cancel ${amount} to ${line.email}? The money returns to your balance.`) && onAct(line.id, 'cancel')}>
+          Cancel payout
+        </button>
+      )}
+      <label>
+        Resend to <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="correct email" />
+      </label>
+      {suggestion && <small> Suggested from {suggestion.source}</small>}
+      <button
+        disabled={busy || !email.trim()}
+        onClick={() => confirm(`${line.status === 'UNCLAIMED' ? 'Cancel this payout and send' : 'Send'} ${amount} to ${email.trim()}?`) && onAct(line.id, 'resend', email)}
+      >
+        {line.status === 'UNCLAIMED' ? 'Cancel and resend' : 'Resend'}
+      </button>
+    </div>
   );
 }

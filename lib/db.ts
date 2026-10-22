@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS reviews (key TEXT PRIMARY KEY, review TEXT, created_a
 `);
 // Column added after the first schema; no-op on new databases.
 try { db.exec('ALTER TABLE lines ADD COLUMN paypal_batch_id TEXT'); } catch {}
+try { db.exec('ALTER TABLE lines ADD COLUMN resend_of INTEGER'); } catch {}
+try { db.exec('ALTER TABLE lines ADD COLUMN unclaimed_since TEXT'); } catch {}
 
 // Seed past payouts once, for the real review later.
 const { n } = db.prepare('SELECT COUNT(*) AS n FROM history').get() as { n: number };
@@ -48,6 +50,7 @@ export type Line = {
   verdict: 'ok' | 'review' | 'block'; flags: string; fix: string | null; fix_note: string | null;
   fix_applied: number; override_reason: string | null; ticked: number; dropped: number;
   payout_item_id: string | null; status: string | null; error: string | null; paypal_batch_id: string | null;
+  resend_of: number | null; unclaimed_since: string | null;
 };
 
 export type Batch = { id: string; created_at: string; status: 'review' | 'sent'; summary: string };
@@ -62,7 +65,14 @@ export const getPayouts = (batchId: string) =>
 export const FINAL_BATCH = ['SUCCESS', 'DENIED', 'CANCELED'];
 
 export const getLines = (batchId: string) =>
-  db().prepare('SELECT * FROM lines WHERE batch_id = ? ORDER BY line').all(batchId) as Line[];
+  db().prepare('SELECT * FROM lines WHERE batch_id = ? ORDER BY line, id').all(batchId) as Line[];
+
+// One place for payout item status, from polling and webhooks. Remembers when an item first went unclaimed.
+export function setItemStatus(lineId: number, itemId: string, status: string, error: string | null) {
+  db().prepare(`UPDATE lines SET payout_item_id = ?, status = ?, error = ?,
+    unclaimed_since = CASE WHEN ? = 'UNCLAIMED' THEN COALESCE(unclaimed_since, ?) ELSE unclaimed_since END
+    WHERE id = ?`).run(itemId, status, error, status, new Date().toISOString(), lineId);
+}
 
 // The owner's approval rule: block needs fix or override, review needs a tick.
 export function isResolved(l: Line) {

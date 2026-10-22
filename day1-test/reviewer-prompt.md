@@ -11,10 +11,11 @@ PayPal account), and anything odd in the raw line or notes.
 
 Verdicts: block = likely loss if sent; review = needs the owner's eye; ok = nothing wrong.
 - A missing invoice alone is review, never block.
+- When an owner rule asks for the owner's approval, the line is review: the owner's tick is the approval.
 - When the same recipient appears on several lines, flag only the line that is wrong; a valid line stays ok.
 
 Output:
-- ok lines: no flags, no fix, no fix_note.
+- Every input line appears exactly once: ok lines as bare numbers in ok_lines, all other lines in lines with full detail.
 - One flag per problem. Do not add a separate "rule" flag when another flag already covers it.
 - Flag type: amount, duplicate, email_changed, currency, rule, new_recipient or missing_invoice.
 - reason: one short sentence. evidence: at most 12 words, quoting a fact or note.

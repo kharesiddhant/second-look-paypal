@@ -15,11 +15,12 @@ export type Review = { lines: LineReview[]; summary: string };
 const MODEL = 'claude-sonnet-5-5';
 const EFFORT = 'medium'; // was high; compare quality on payout.csv and blind-payout.csv
 
-// Flat fix shape for the model; normalised to Fix below.
+// Clean lines come back as bare numbers in ok_lines; only flagged lines carry detail (saves output tokens).
 const ReviewSchema = z.object({
+  ok_lines: z.array(z.number().int()),
   lines: z.array(z.object({
     line: z.number().int(),
-    verdict: z.enum(['ok', 'review', 'block']),
+    verdict: z.enum(['review', 'block']),
     flags: z.array(z.object({ type: z.string(), reason: z.string(), evidence: z.string() })),
     fix: z.object({
       action: z.enum(['set', 'drop']),
@@ -50,6 +51,8 @@ export async function reviewBatch(csv: string): Promise<Review> {
     return JSON.parse(cached.review);
   }
 
+  // ponytail: one call, max_tokens 16000. Estimated ceiling ~100 flagged lines (~150 output tokens each)
+  // plus thinking; past ~200-line batches, split into parallel chunks (README: Scaling).
   const response = await new Anthropic().beta.messages.parse({
     model: MODEL,
     max_tokens: 16000,
@@ -66,14 +69,20 @@ export async function reviewBatch(csv: string): Promise<Review> {
   const out = response.parsed_output;
   if (!out) throw new Error('Review output did not match the schema');
 
+  // A line in both lists keeps its detailed (stricter) verdict; a line in neither falls back to review upstream.
+  const flagged = new Set(out.lines.map(l => l.line));
   const review: Review = {
     summary: out.summary,
-    lines: out.lines.map(l => ({
-      ...l,
-      fix: l.fix?.action === 'drop' ? { action: 'drop' }
-        : l.fix?.changes.length ? { action: 'set', changes: l.fix.changes }
-        : null,
-    })),
+    lines: [
+      ...out.ok_lines.filter(n => !flagged.has(n))
+        .map(n => ({ line: n, verdict: 'ok' as const, flags: [], fix: null, fix_note: null })),
+      ...out.lines.map((l): LineReview => ({
+        ...l,
+        fix: l.fix?.action === 'drop' ? { action: 'drop' as const }
+          : l.fix?.changes.length ? { action: 'set' as const, changes: l.fix.changes }
+          : null,
+      })),
+    ],
   };
   db().prepare('INSERT OR REPLACE INTO reviews VALUES (?, ?, ?)').run(key, JSON.stringify(review), new Date().toISOString());
   return review;
