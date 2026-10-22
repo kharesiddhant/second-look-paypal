@@ -8,6 +8,7 @@ type Suggestion = { email: string; source: string } | null;
 type Data = {
   batch: Batch; lines: Line[]; payouts: Payout[]; canSend: boolean;
   suggestions: Record<number, Suggestion>; resent: number[]; nudgeHours: number;
+  progress: { done: number; total: number } | null;
 };
 type BatchSummary = { id: string; created_at: string; status: string; lines: number; unclaimed: number | null; pending: number | null };
 
@@ -130,15 +131,16 @@ export default function Page() {
     load(); // reload even on error: lines may now be sent or "sending"
   }
 
-  // Polling: refresh every 5 s while any PayPal batch is not final.
+  // Polling: refresh while a big review is running (3 s) or any PayPal batch is not final (5 s).
   const sent = data?.batch.status === 'sent';
+  const reviewing = data?.batch.status === 'reviewing';
   const pendingLines = data?.lines.filter(isPending) ?? [];
   const pending = !!data?.payouts.some(p => !FINAL.includes(p.status ?? ''));
   useEffect(() => {
-    if (!pending) return;
-    const t = setInterval(() => load(), 5000);
+    if (!pending && !reviewing) return;
+    const t = setInterval(() => load(), reviewing ? 3000 : 5000);
     return () => clearInterval(t);
-  }, [pending, id]);
+  }, [pending, reviewing, id]);
 
   return (
     <main>
@@ -178,6 +180,7 @@ export default function Page() {
             {demo && (
               <>
                 <button type="button" disabled={busy} onClick={() => { const f = new FormData(); f.set('demo', '1'); upload(f); }}>Load demo</button>{' '}
+                <button type="button" disabled={busy} onClick={() => { const f = new FormData(); f.set('demo', 'big'); upload(f); }}>Load big demo (500 lines)</button>{' '}
                 <button type="button" disabled={busy} onClick={resetDemo}>Reset demo</button>
               </>
             )}
@@ -205,6 +208,12 @@ export default function Page() {
         <>
           <p><button onClick={() => openBatch(null)}>New batch</button></p>
           <p>{data.batch.summary}</p>
+          {reviewing && data.progress && (
+            <p role="status">
+              Reviewing {data.lines.length} lines: {data.progress.done} of {data.progress.total} parts done.{' '}
+              <progress value={data.progress.done} max={data.progress.total} />
+            </p>
+          )}
           <p>Batch {data.batch.id} · {data.batch.status}</p>
           {data.payouts.length > 0 && (
             <ul>
@@ -254,6 +263,12 @@ export default function Page() {
                         }}>Override</button>
                       )}
                       {l.override_reason && <p>Overridden: {l.override_reason}</p>}
+                      {!locked && !l.dropped && fix?.action !== 'drop' && (
+                        <button disabled={busy} onClick={() => act(l.id, 'drop')}>Drop line</button>
+                      )}
+                      {!locked && !!l.dropped && (
+                        <button disabled={busy} onClick={() => act(l.id, 'undrop')}>Undo drop</button>
+                      )}
                       {l.verdict === 'review' && !l.dropped && (
                         <label>
                           <input type="checkbox" checked={!!l.ticked} disabled={busy || locked} onChange={() => act(l.id, 'tick')} /> Checked

@@ -24,19 +24,14 @@ TODO: how the Context Plugin shaped the PayPal integration; Transaction Search v
 
 ## Scaling
 
-Measured on the test batches (Claude Sonnet 5.5, medium effort): about 1,430 fixed input tokens per batch (prompt + output schema) plus about 96 per line. Code pre-computes the facts for each line (invoice match, history summary, duplicates, same recipient), so the model judges instead of searching raw files. Clean lines come back as bare line numbers; only flagged lines carry detail.
+Batches of up to 50 lines are reviewed in one call while the owner waits. Bigger batches (up to 500 lines) are saved at once and reviewed in the background in 50-line chunks, in parallel, with a progress bar.
 
-| Batch | Input tokens | Notes |
-|---|---|---|
-| 8 lines | ~2,500 | measured: ~$0.015 per review |
-| 100 lines | ~11,000 | estimate |
-| 500 lines | ~49,000 | estimate |
+- **Render Workflows:** with `RENDER_WORKFLOW_SLUG` set, each chunk is a task run of the `reviewChunk` task (`workflows/review.ts`, retries with backoff, idempotency key per chunk). Without it (local development), chunks run in-process. Both paths store results the same way (`lib/chunks.ts`).
+- **No context lost by splitting:** facts are computed by code over the whole batch first (duplicates, repeats, same recipient across chunks), then split. Each chunk gets only the notes about its lines, plus notes that concern no line.
+- **Failure:** a chunk with no answer after its retries leaves its lines as "AI review unavailable" for the owner to check; the code floor still applies to them.
+- **Cost:** measured about 1,430 fixed input tokens per call plus about 96 per line; clean lines come back as bare line numbers. Big batches use a code-written summary.
 
-Known limit: one review is one model call with `max_tokens` 16,000, estimated to hold about 100 flagged lines. Plan for larger batches:
-
-1. Split the batch into chunks of ~50 lines reviewed in parallel. Cross-line facts (duplicates, same recipient) are computed in code over the whole batch first, so chunks lose nothing.
-2. Run the review as a background job with progress (Render Workflows).
-3. Offer the Message Batches API (50% cheaper, results within 24 hours) for owners who review overnight.
+Demo: **Load big demo** reviews 500 creator payouts (`day1-test/big-payout.csv`, answer key in `day1-test/big-answer-key.md`). Sending it creates 500 sandbox payouts to addresses without sandbox accounts, which come back unclaimed.
 
 ## Setup
 
@@ -54,6 +49,7 @@ TODO: Node 22+, `npm install`, `npm run dev`, sandbox accounts.
 | `DB_PATH` | no | SQLite file location; default `data/second-look.db`. Point it at a persistent disk in production. |
 | `UNCLAIMED_NUDGE_HOURS` | no | Hours before an unclaimed payout is highlighted; default 72 |
 | `REVIEW_MODE` | no | `stub` skips the AI call for the demo CSV only (UI testing) |
+| `RENDER_WORKFLOW_SLUG`, `RENDER_API_KEY` | no | Run big-batch chunks on Render Workflows; unset = in-process |
 
 ## Privacy
 

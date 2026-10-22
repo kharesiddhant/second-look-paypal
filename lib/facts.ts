@@ -14,7 +14,9 @@ const sameMoney = (a: string, b: string) => Number(a) === Number(b);
 
 // Splits pasted emails or notes into separate chunks (blank line between them).
 export const splitNotes = (text: string) => text.split(/\n\s*\n/).map(n => n.trim()).filter(Boolean);
-export const formatNotes = (notes: string[]) => notes.map((n, k) => `n${k + 1}: ${n.replace(/\s*\n\s*/g, ' | ')}`).join('\n');
+// Notes keep their batch-wide numbers (n1, n2…) even when only some are sent with a chunk of lines.
+export const formatNotes = (notes: string[], ids = notes.map((_, k) => k + 1)) =>
+  ids.map(n => `n${n}: ${notes[n - 1].replace(/\s*\n\s*/g, ' | ')}`).join('\n');
 
 // Reads the demo text format ("=== ID ===" blocks plus free notes). Other files go through AI extraction (lib/invoices.ts).
 export function parseInvoices(text: string) {
@@ -108,8 +110,12 @@ export function suggestEmail(line: { name: string; email: string; invoice: strin
 
 // Compact on purpose: only differences and non-empty facts are printed. Notes are listed once in <notes>
 // and referenced here by ID, so a long email is not repeated under every line that mentions it.
-export function buildFacts(table: Table, history: HistoryRow[], invoiceList: Invoice[], notes: string[] = []) {
-  return lineContexts(table, history, invoiceList, notes).map(c => {
+export const buildFacts = (table: Table, history: HistoryRow[], invoiceList: Invoice[], notes: string[] = []) =>
+  formatFacts(lineContexts(table, history, invoiceList, notes));
+
+// Facts are computed over the whole batch first, so a chunk of lines still sees duplicates and repeats elsewhere.
+export function formatFacts(contexts: LineContext[]) {
+  return contexts.map(c => {
     const r = c.row;
     const out = [`line ${c.line}: ${c.raw}`];
 

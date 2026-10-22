@@ -29,3 +29,19 @@ services:
     #   sizeGB: 1
     # and add:  - key: DB_PATH
     #             value: /var/data/second-look.db
+
+  # Render Workflows: reviews big batches (over 50 lines) in 50-line chunks, in parallel, with retries.
+  # Not deployed yet. To turn on: uncomment this service, give it ANTHROPIC_API_KEY, then on the web service
+  # set RENDER_API_KEY (Account settings > API keys) and RENDER_WORKFLOW_SLUG (this workflow's slug, shown in
+  # the dashboard). Without RENDER_WORKFLOW_SLUG the web service reviews chunks in-process instead.
+  # - type: workflow
+  #   name: second-look-review
+  #   runtime: node
+  #   region: oregon
+  #   buildCommand: npm install
+  #   startCommand: npx tsx workflows/review.ts
+  #   envVars:
+  #     - key: NODE_VERSION
+  #       value: "22"
+  #     - key: ANTHROPIC_API_KEY
+  #       sync: false

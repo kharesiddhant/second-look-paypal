@@ -9,7 +9,7 @@ export async function POST(req: Request) {
   if (!demoMode()) return Response.json({ error: 'Reset is only available when DEMO=1' }, { status: 400 });
   db().exec('BEGIN');
   try {
-    db().exec(`DELETE FROM lines; DELETE FROM payouts; DELETE FROM batches; DELETE FROM events;
+    db().exec(`DELETE FROM review_chunks; DELETE FROM lines; DELETE FROM payouts; DELETE FROM batches; DELETE FROM events;
       DELETE FROM history WHERE source = 'paypal'; DELETE FROM meta WHERE key = 'history_synced_at';`);
     db().exec('COMMIT');
   } catch (e) {

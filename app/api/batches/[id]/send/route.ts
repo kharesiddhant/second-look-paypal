@@ -16,6 +16,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const batch = getBatch(id);
   if (!batch) return Response.json({ error: 'Not found' }, { status: 404 });
 
+  if (batch.status === 'reviewing') return Response.json({ error: 'The review is still running' }, { status: 409 });
+
   const lines = getLines(id);
   const unsent = lines.filter(l => !l.dropped && !l.paypal_batch_id);
   if (!unsent.length) return Response.json({ error: 'Nothing left to send' }, { status: 409 });

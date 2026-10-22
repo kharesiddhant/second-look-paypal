@@ -15,6 +15,8 @@ before sending if the email has a PayPal account), and anything odd in the raw l
 
 Verdicts: block = likely loss if sent; review = needs the owner's eye; ok = nothing wrong.
 - A missing invoice alone is review, never block.
+- A currency mismatch alone is review, never block.
+- When the invoice was already paid (a duplicate), do not also flag it as a missing invoice; the duplicate is the problem.
 - When an owner rule asks for the owner's approval, the line is review: the owner's tick is the approval.
 - When the same recipient appears on several lines, flag only the line that is wrong; a valid line stays ok.
 

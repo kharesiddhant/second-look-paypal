@@ -2,6 +2,7 @@ import { applyItemUpdate, getBatch, getLines, getPayouts, isResolved, loadHistor
 import { requireOwner } from '@/lib/auth';
 import { paypal } from '@/lib/paypal';
 import { suggestEmail } from '@/lib/facts';
+import { refreshChunkedReview } from '@/lib/chunks';
 
 // Hours an item may stay unclaimed before the page nudges the owner. Set low (e.g. 0.05) for demos.
 const NUDGE_HOURS = Number(process.env.UNCLAIMED_NUDGE_HOURS ?? 72) || 72;
@@ -11,8 +12,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const denied = requireOwner(req);
   if (denied) return denied;
   const { id } = await params;
-  const batch = getBatch(id);
+  let batch = getBatch(id);
   if (!batch) return Response.json({ error: 'Not found' }, { status: 404 });
+
+  // Big batch still under review: collect finished chunks (finalises the batch when the last one is in).
+  const progress = batch.status === 'reviewing' ? await refreshChunkedReview(batch) : null;
+  batch = getBatch(id)!;
 
   for (const p of getPayouts(id).filter(p => !FINAL_BATCH.includes(p.status ?? ''))) {
     try {
@@ -48,5 +53,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     suggestions,
     resent: [...resent],
     nudgeHours: NUDGE_HOURS,
+    progress,
   });
 }

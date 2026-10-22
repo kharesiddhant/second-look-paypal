@@ -33,6 +33,11 @@ CREATE TABLE IF NOT EXISTS lines (
 CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, type TEXT, received_at TEXT);
 -- Reviews keyed by a hash of everything sent to the model, so identical requests are not paid for twice.
 CREATE TABLE IF NOT EXISTS reviews (key TEXT PRIMARY KEY, review TEXT, created_at TEXT);
+-- Big batches are reviewed in 50-line chunks in the background (lib/chunks.ts).
+CREATE TABLE IF NOT EXISTS review_chunks (
+  batch_id TEXT, idx INTEGER, key TEXT, run_id TEXT, status TEXT, result TEXT, error TEXT, started_at TEXT,
+  PRIMARY KEY (batch_id, idx)
+);
 `);
 // Columns added after the first schema; no-ops on new databases.
 try { db.exec('ALTER TABLE lines ADD COLUMN paypal_batch_id TEXT'); } catch {}
@@ -61,6 +66,16 @@ if (n === 0 && demoMode()) {
     insert.run(r.date, r.name, r.email, r.amount, r.currency, r.invoice);
   }
 }
+// The 500-creator history behind the big demo, seeded once (also into demo databases created before it existed).
+if (demoMode() && !db.prepare("SELECT 1 FROM meta WHERE key = 'seeded_big_demo'").get()) {
+  const insert = db.prepare("INSERT INTO history (date, name, email, amount, currency, invoice, source) VALUES (?, ?, ?, ?, ?, ?, 'seed')");
+  db.exec('BEGIN');
+  for (const r of parseCsv(readFileSync('day1-test/big-history.csv', 'utf8'))) {
+    insert.run(r.date, r.name, r.email, r.amount, r.currency, r.invoice);
+  }
+  db.prepare("INSERT INTO meta (key, value) VALUES ('seeded_big_demo', '1')").run();
+  db.exec('COMMIT');
+}
 }
 
 export type Line = {
@@ -74,7 +89,7 @@ export type Line = {
 };
 
 export type Batch = {
-  id: string; created_at: string; status: 'review' | 'sent'; summary: string;
+  id: string; created_at: string; status: 'reviewing' | 'review' | 'sent'; summary: string;
   invoices: string | null; notes: string | null;
 };
 

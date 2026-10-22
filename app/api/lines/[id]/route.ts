@@ -2,7 +2,8 @@ import { db, getBatch, type Line } from '@/lib/db';
 import { requireOwner } from '@/lib/auth';
 import type { Fix } from '@/lib/review';
 
-// Owner actions on one line: apply the suggested fix, override a block with a reason, tick a review line.
+// Owner actions on one line: apply the suggested fix, override a block with a reason, tick a review line,
+// or drop any line by hand (and undo that before sending).
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const denied = requireOwner(req);
   if (denied) return denied;
@@ -32,6 +33,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (line.verdict !== 'block') return Response.json({ error: 'Only block lines need an override' }, { status: 400 });
     if (!reason?.trim()) return Response.json({ error: 'Override needs a reason' }, { status: 400 });
     db().prepare('UPDATE lines SET override_reason = ? WHERE id = ?').run(String(reason).trim().slice(0, 500), line.id);
+  } else if (action === 'drop') {
+    db().prepare('UPDATE lines SET dropped = 1 WHERE id = ?').run(line.id);
+  } else if (action === 'undrop') {
+    // Undoing a drop that came from the suggested fix also un-applies that fix, so the line needs resolving again.
+    const fixWasDrop = !!line.fix && (JSON.parse(line.fix) as Fix).action === 'drop';
+    db().prepare('UPDATE lines SET dropped = 0, fix_applied = ? WHERE id = ?').run(fixWasDrop ? 0 : line.fix_applied, line.id);
   } else if (action === 'tick') {
     db().prepare('UPDATE lines SET ticked = 1 - ticked WHERE id = ?').run(line.id);
   } else {

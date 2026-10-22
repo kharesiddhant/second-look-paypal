@@ -38,7 +38,7 @@ export function parseCsvTable(text: string): Table {
 export const parseCsv = (text: string) => parseCsvTable(text).rows;
 
 const REQUIRED = ['name', 'email', 'amount', 'currency', 'invoice'];
-export const MAX_ROWS = 200; // one review call holds about this many lines (README: Scaling)
+export const MAX_ROWS = 500; // over 50 lines a batch is reviewed in 50-line chunks (lib/chunks.ts)
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Owner's rule: a CSV with any invalid row is rejected as a whole, with every problem listed by row number.

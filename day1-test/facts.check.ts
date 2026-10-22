@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseCsvTable, validatePayoutRows } from '../lib/csv';
-import { buildFacts, lineContexts, parseInvoices, suggestEmail, type Invoice } from '../lib/facts';
+import { buildFacts, formatFacts, lineContexts, parseInvoices, suggestEmail, type Invoice } from '../lib/facts';
 import { guardLine } from '../lib/guards';
 import type { LineReview } from '../lib/review';
 
@@ -76,7 +76,8 @@ async function main() {
 
   // Payout status rules, on a throwaway database.
   process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'second-look-')), 'check.db');
-  const { db, applyItemUpdate, getLines, loadHistory } = await import('../lib/db');
+  process.env.DEMO = '1'; // seeds both demo histories into the throwaway database
+  const { db, applyItemUpdate, getLines, getBatch, loadHistory } = await import('../lib/db');
   db().prepare("INSERT INTO batches (id, created_at, status, summary) VALUES ('b1', '2026-10-22T00:00:00Z', 'review', '')").run();
   const addLine = db().prepare(`INSERT INTO lines (id, batch_id, line, name, email, amount, currency, invoice, verdict, flags, paypal_batch_id, send_ref, sent_at)
     VALUES (?, 'b1', ?, 'Raj Video', 'raj.video@personal.example.com', '400.00', ?, ?, 'ok', '[]', ?, ?, '2026-10-22T00:00:00Z')`);
@@ -95,6 +96,39 @@ async function main() {
   assert.equal(upd(2, 'SUCCESS', 'PB2', 'b1-EUR-1'), true);       // reconciled through its sender_batch_id
   assert.equal(getLines('b1')[1].paypal_batch_id, 'PB2');
   assert.equal(db().prepare("SELECT status FROM batches WHERE id = 'b1'").get()?.status, 'sent');
+
+  // Big batches: facts span chunk boundaries, each chunk gets only its own notes, and finalising applies the floor.
+  const { reviewInput } = await import('../lib/review');
+  const { refreshChunkedReview, CHUNK } = await import('../lib/chunks');
+  const bigTable = parseCsvTable(read('big-payout.csv'));
+  const bigDemo = parseInvoices(read('big-invoices.txt'));
+  const bigCtx = lineContexts(bigTable, loadHistory(), bigDemo.invoices, bigDemo.notes);
+  assert.equal(bigCtx.length, 500);
+  assert.match(formatFacts([bigCtx[117]]), /duplicate: CR-0118-09 already paid 2026-09-30/);
+  const part0 = reviewInput(bigCtx.slice(0, CHUNK), bigCtx, bigDemo.notes, 'rules');
+  const part1 = reviewInput(bigCtx.slice(CHUNK, 2 * CHUNK), bigCtx, bigDemo.notes, 'rules');
+  assert.match(part0.content, /<notes>\nn1: --- Forwarded email/); // the scam email concerns line 7, in chunk 0
+  assert.doesNotMatch(part1.content, /<notes>/);
+  assert.notEqual(part0.key, part1.key);
+
+  db().prepare("INSERT INTO batches (id, created_at, status, summary, invoices, notes) VALUES ('big', '2026-10-23T00:00:00Z', 'reviewing', '', ?, ?)")
+    .run(JSON.stringify(bigDemo.invoices), JSON.stringify(bigDemo.notes));
+  const addBig = db().prepare(`INSERT INTO lines (batch_id, line, name, email, amount, currency, invoice, note, verdict, flags)
+    VALUES ('big', ?, ?, ?, ?, ?, ?, ?, 'review', '[]')`);
+  bigCtx.slice(0, 2 * CHUNK).forEach(c => addBig.run(c.line, c.row.name, c.row.email, c.row.amount, c.row.currency, c.row.invoice, c.row.note));
+  const addChunk = db().prepare("INSERT INTO review_chunks (batch_id, idx, key, status, result, started_at) VALUES ('big', ?, ?, ?, ?, ?)");
+  const allOk = { summary: '', lines: Array.from({ length: CHUNK }, (_, i) => ({ line: i + 1, verdict: 'ok', flags: [], fix: null, fix_note: null })) };
+  addChunk.run(0, 'k0', 'done', JSON.stringify(allOk), new Date().toISOString()); // the AI says all 50 are fine
+  addChunk.run(1, 'k1', 'failed', null, new Date().toISOString());                // this chunk never answered
+  const progress = await refreshChunkedReview(getBatch('big')!);
+  assert.deepStrictEqual(progress, { done: 2, total: 2 });
+  const big = getLines('big');
+  assert.equal(getBatch('big')!.status, 'review');
+  assert.equal(big[6].verdict, 'block');   // line 7: changed email, caught by the code floor despite the AI's ok
+  assert.equal(big[0].verdict, 'ok');
+  assert.equal(big[62 - 1].verdict, 'review'); // line 62: failed chunk, needs the owner's tick
+  assert.equal(big[63 - 1].verdict, 'block');  // line 63: failed chunk, but the floor still catches the 10x amount
+  assert.match(getBatch('big')!.summary, /1 part\(s\) had no AI answer/);
 
   console.log('facts check passed');
 }
