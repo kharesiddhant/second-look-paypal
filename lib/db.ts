@@ -33,11 +33,16 @@ CREATE TABLE IF NOT EXISTS reviews (key TEXT PRIMARY KEY, review TEXT, created_a
 try { db.exec('ALTER TABLE lines ADD COLUMN paypal_batch_id TEXT'); } catch {}
 try { db.exec('ALTER TABLE lines ADD COLUMN resend_of INTEGER'); } catch {}
 try { db.exec('ALTER TABLE lines ADD COLUMN unclaimed_since TEXT'); } catch {}
+// History rows are labelled: 'seed' (demo file) or 'paypal' (imported via Transaction Search, keyed by transaction ID).
+try { db.exec("ALTER TABLE history ADD COLUMN source TEXT DEFAULT 'seed'"); } catch {}
+try { db.exec('ALTER TABLE history ADD COLUMN txn_id TEXT'); } catch {}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS history_txn ON history (txn_id)');
+db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
 
 // Seed past payouts once, for the real review later.
 const { n } = db.prepare('SELECT COUNT(*) AS n FROM history').get() as { n: number };
 if (n === 0) {
-  const insert = db.prepare('INSERT INTO history VALUES (?, ?, ?, ?, ?, ?)');
+  const insert = db.prepare("INSERT INTO history (date, name, email, amount, currency, invoice, source) VALUES (?, ?, ?, ?, ?, ?, 'seed')");
   for (const r of parseCsv(readFileSync('day1-test/history.csv', 'utf8'))) {
     insert.run(r.date, r.name, r.email, r.amount, r.currency, r.invoice);
   }

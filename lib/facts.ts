@@ -46,7 +46,8 @@ export function buildFacts(csv: string, history: Row[], invoicesText: string) {
   const rawLines = csv.trim().split(/\r?\n/).slice(1).filter(l => l.trim());
   const rows = parseCsv(csv);
   const { invoices, notes } = parseInvoices(invoicesText);
-  const paid = new Map(history.map(h => [norm(h.invoice), h]));
+  // Imported rows without an invoice ID can never match as duplicates.
+  const paid = new Map(history.filter(h => h.invoice).map(h => [norm(h.invoice), h]));
 
   // Compact on purpose: only differences and non-empty facts are printed.
   return rows.map((r, i) => {

@@ -47,7 +47,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         amount: { value: Number(line.amount).toFixed(2), currency: line.currency },
         receiver: to,
         sender_item_id: String(newId),
-        note: line.note || undefined,
+        note: [line.invoice, line.note].filter(Boolean).join(' · ') || undefined,
       }],
     });
     const ppId = pp.batch_header.payout_batch_id;

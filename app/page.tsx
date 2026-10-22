@@ -20,6 +20,17 @@ export default function Page() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [history, setHistory] = useState<{ counts: Record<string, number>; syncedAt: string | null } | null>(null);
+  const [syncInfo, setSyncInfo] = useState<string | null>(null);
+
+  useEffect(() => { fetch('/api/history').then(r => r.json()).then(setHistory); }, []);
+
+  async function syncHistory() {
+    const j = await call('/api/history');
+    if (!j) return;
+    setHistory({ counts: j.counts, syncedAt: j.syncedAt });
+    setSyncInfo(`Found ${j.seen} payouts: imported ${j.imported} completed${j.notPaid ? `, skipped ${j.notPaid} not completed (unclaimed or returned)` : ''}${j.unknownRecipient ? `, ${j.unknownRecipient} without recipient email` : ''}.`);
+  }
 
   async function load(batchId = id) {
     if (!batchId) return;
@@ -71,6 +82,13 @@ export default function Page() {
   return (
     <main>
       <h1>Second Look</h1>
+
+      <p>
+        History: {history ? Object.entries(history.counts).map(([s, n]) => `${n} ${s}`).join(', ') || 'none' : '…'}
+        {history?.syncedAt && ` · last PayPal sync ${new Date(history.syncedAt).toLocaleString()}`}{' '}
+        <button disabled={busy} onClick={syncHistory}>Sync history from PayPal</button>
+      </p>
+      {syncInfo && <p>{syncInfo}</p>}
 
       {!data && (
         <label>
