@@ -16,7 +16,7 @@ TODO: Payouts REST (`lib/paypal.ts`, `app/api/batches/[id]/send/route.ts`), webh
 
 ## AI usage
 
-TODO: model, what it checks, where (`lib/review.ts`, `day1-test/reviewer-prompt.md`).
+TODO: model, what it checks, where (`lib/review.ts`, `lib/reviewer-prompt.md`, `lib/guards.ts`).
 
 ## Built with APIMatic
 
@@ -44,7 +44,20 @@ TODO: Node 22+, `npm install`, `npm run dev`, sandbox accounts.
 
 ## Environment variables
 
-TODO: `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `ANTHROPIC_API_KEY`.
+| Variable | Required | Purpose |
+|---|---|---|
+| `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | yes | PayPal sandbox app (US business account as sender; Transaction search enabled) |
+| `PAYPAL_WEBHOOK_ID` | yes | Webhook signature verification |
+| `ANTHROPIC_API_KEY` | yes | Claude Sonnet 5.5 review, Claude Haiku 5.5 invoice reading |
+| `APP_PASSWORD` | yes | Shared sign-in password. Without it nobody can sign in (fails closed). |
+| `DEMO` | no | `1` seeds demo history, enables the Load demo button and the demo rules |
+| `DB_PATH` | no | SQLite file location; default `data/second-look.db`. Point it at a persistent disk in production. |
+| `UNCLAIMED_NUDGE_HOURS` | no | Hours before an unclaimed payout is highlighted; default 72 |
+| `REVIEW_MODE` | no | `stub` skips the AI call for the demo CSV only (UI testing) |
+
+## Privacy
+
+Payout lines (names, emails, amounts), invoices and pasted notes are sent to the Anthropic API for review and invoice reading. Nothing is sent to other third parties apart from PayPal. Data is stored in a local SQLite file.
 
 ## Testing for judges
 

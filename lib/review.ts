@@ -4,7 +4,9 @@ import { z } from 'zod';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { db } from './db';
-import { buildFacts } from './facts';
+import { buildFacts, formatNotes, type Invoice } from './facts';
+import { parseCsvTable, type Table } from './csv';
+import type { HistoryRow } from './db';
 
 export type Change = { field: 'email' | 'amount' | 'currency'; value: string };
 export type Fix = { action: 'set'; changes: Change[] } | { action: 'drop' };
@@ -31,17 +33,22 @@ const ReviewSchema = z.object({
   summary: z.string(),
 });
 
-// ponytail: inputs are the fixed day1-test files; rules and invoices move to owner uploads in the depth phase.
-export async function reviewBatch(csv: string): Promise<Review> {
-  // Test mode: no AI call. The saved review only matches day1-test/payout.csv.
-  if (process.env.REVIEW_MODE === 'stub') return JSON.parse(readFileSync('day1-test/review.json', 'utf8'));
+export async function reviewBatch(
+  table: Table, history: HistoryRow[], invoices: Invoice[], notes: string[], rules: string,
+): Promise<Review> {
+  // Test mode: no AI call, and only for the demo CSV; any other file would inherit the demo's verdicts.
+  if (process.env.REVIEW_MODE === 'stub') {
+    const demo = parseCsvTable(readFileSync('day1-test/payout.csv', 'utf8'));
+    if (JSON.stringify(demo.rows) !== JSON.stringify(table.rows)) throw new Error('test mode (REVIEW_MODE=stub) only covers the demo CSV');
+    return JSON.parse(readFileSync('day1-test/review.json', 'utf8'));
+  }
 
-  const history = db().prepare('SELECT * FROM history ORDER BY date').all() as Record<string, string>[];
-  const system = readFileSync('day1-test/reviewer-prompt.md', 'utf8');
+  const system = readFileSync('lib/reviewer-prompt.md', 'utf8');
   const content = [
-    `<lines>\n${buildFacts(csv, history, readFileSync('day1-test/invoices.txt', 'utf8'))}\n</lines>`,
-    `<rules>\n${readFileSync('day1-test/rules.txt', 'utf8')}\n</rules>`,
-  ].join('\n\n');
+    `<lines>\n${buildFacts(table, history, invoices, notes)}\n</lines>`,
+    notes.length ? `<notes>\n${formatNotes(notes)}\n</notes>` : '',
+    `<rules>\n${rules.trim() || '(no rules set)'}\n</rules>`,
+  ].filter(Boolean).join('\n\n');
 
   // Same CSV, prompt, history, invoices, rules, model and effort: reuse the stored review.
   const key = createHash('sha256').update([MODEL, EFFORT, system, content].join('\0')).digest('hex');

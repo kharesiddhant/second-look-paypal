@@ -1,36 +1,105 @@
-import { db } from '@/lib/db';
-import { parseCsv } from '@/lib/csv';
-import { reviewBatch, type Review } from '@/lib/review';
+import { readFileSync } from 'node:fs';
+import { db, demoMode, getRules, loadHistory } from '@/lib/db';
+import { requireOwner } from '@/lib/auth';
+import { parseCsvTable, validatePayoutRows, type Table } from '@/lib/csv';
+import { lineContexts, parseInvoices, splitNotes, type Invoice } from '@/lib/facts';
+import { guardLine } from '@/lib/guards';
+import { readInvoiceFile } from '@/lib/invoices';
+import { reviewBatch, type LineReview, type Review } from '@/lib/review';
 
-// Upload a payout CSV: store lines, run the review, store verdicts.
+const MAX_FILES = 50;
+const MAX_FILE = 5 * 1024 * 1024;
+const MAX_TOTAL = 20 * 1024 * 1024; // whole upload; everything is held in memory while it is read
+const MAX_NOTES = 20_000;
+
+// Recent batches, so a batch can be reopened after the page is closed (cancel and resend happen days later).
+export async function GET(req: Request) {
+  const denied = requireOwner(req);
+  if (denied) return denied;
+  const batches = db().prepare(`SELECT b.id, b.created_at, b.status, COUNT(l.id) AS lines,
+      SUM(l.status = 'UNCLAIMED') AS unclaimed,
+      SUM(l.dropped = 0 AND l.send_ref IS NOT NULL AND l.paypal_batch_id IS NULL) AS pending
+    FROM batches b LEFT JOIN lines l ON l.batch_id = b.id
+    GROUP BY b.id ORDER BY b.created_at DESC LIMIT 20`).all();
+  return Response.json({ batches });
+}
+
+// Upload a batch: payout CSV, invoice files and pasted notes (or the demo files), then run the review.
 export async function POST(req: Request) {
-  const csv = await req.text();
-  const rows = parseCsv(csv);
-  if (!rows.length) return Response.json({ error: 'CSV has no rows' }, { status: 400 });
+  const denied = requireOwner(req);
+  if (denied) return denied;
+  if (Number(req.headers.get('content-length') ?? 0) > MAX_TOTAL + 1024 * 1024) {
+    return Response.json({ error: 'The upload is over 20 MB in total' }, { status: 413 });
+  }
+  const form = await req.formData();
+  let csv: string, notes: string[] = [];
+  let files: File[] = [];
+  let invoices: Invoice[] = [];
+
+  if (form.get('demo')) {
+    if (!demoMode()) return Response.json({ error: 'Demo files are off on this server' }, { status: 400 });
+    csv = readFileSync('day1-test/payout.csv', 'utf8');
+    ({ invoices, notes } = parseInvoices(readFileSync('day1-test/invoices.txt', 'utf8')));
+  } else {
+    const csvFile = form.get('csv');
+    if (!(csvFile instanceof File)) return Response.json({ error: 'Choose a payout CSV' }, { status: 400 });
+    files = form.getAll('invoices').filter((f): f is File => f instanceof File && f.size > 0);
+    if (files.length > MAX_FILES) return Response.json({ error: `At most ${MAX_FILES} invoice files` }, { status: 400 });
+    const tooBig = files.find(f => f.size > MAX_FILE);
+    if (tooBig) return Response.json({ error: `${tooBig.name} is over 5 MB` }, { status: 400 });
+    if (csvFile.size + files.reduce((s, f) => s + f.size, 0) > MAX_TOTAL) {
+      return Response.json({ error: 'The upload is over 20 MB in total' }, { status: 413 });
+    }
+    const notesText = String(form.get('notes') ?? '');
+    if (notesText.length > MAX_NOTES) return Response.json({ error: 'Notes are limited to 20,000 characters' }, { status: 400 });
+    csv = await csvFile.text();
+    notes = splitNotes(notesText);
+  }
+
+  // Owner's rule: any invalid row rejects the whole upload, before any AI cost.
+  const parsed = parseCsvTable(csv);
+  const problems = validatePayoutRows(parsed.rows);
+  if (problems.length) {
+    const more = problems.length > 20 ? `\n…and ${problems.length - 20} more` : '';
+    return Response.json({ error: `The CSV needs fixing:\n${problems.slice(0, 20).join('\n')}${more}` }, { status: 400 });
+  }
+  const table: Table = { ...parsed, rows: parsed.rows.map(r => ({ ...r, currency: r.currency.toUpperCase() })) };
+
+  // Read invoice files in parallel; a file that fails is named in the summary and its lines show a missing invoice.
+  const unreadable: string[] = [];
+  const results = await Promise.allSettled(files.map(readInvoiceFile));
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') { invoices.push(...r.value.invoices); notes.push(...r.value.notes); }
+    else { unreadable.push(files[i].name); console.error('invoice read failed', files[i].name, r.reason); }
+  });
 
   // Owner's rule: if the AI fails, the batch still loads and every line needs a tick.
+  const history = loadHistory();
   let review: Review;
   let unreviewed = 'The review returned nothing for this line.';
   try {
-    review = await reviewBatch(csv);
+    review = await reviewBatch(table, history, invoices, notes, getRules());
   } catch (e) {
     console.error('review failed', e);
     unreviewed = 'AI review unavailable. Check this line yourself.';
     review = { lines: [], summary: `AI review unavailable: ${(e as Error).message}` };
   }
+  const summary = unreadable.length ? `Could not read: ${unreadable.join(', ')}. ${review.summary}` : review.summary;
   const byLine = new Map(review.lines.map(r => [r.line, r]));
   const id = `sl-${Date.now()}`;
 
-  db().prepare('INSERT INTO batches (id, created_at, status, summary) VALUES (?, ?, ?, ?)')
-    .run(id, new Date().toISOString(), 'review', review.summary);
+  db().prepare('INSERT INTO batches (id, created_at, status, summary, invoices, notes) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, new Date().toISOString(), 'review', summary, JSON.stringify(invoices), JSON.stringify(notes));
   const insert = db().prepare(`INSERT INTO lines
     (batch_id, line, name, email, amount, currency, invoice, note, verdict, flags, fix, fix_note)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-  for (const r of rows) {
-    const n = Number(r.line);
-    // A line the review missed is never auto-ok.
-    const rv = byLine.get(n) ?? { verdict: 'review', flags: [{ type: 'unreviewed', reason: unreviewed, evidence: '' }], fix: null, fix_note: null };
-    insert.run(id, n, r.name, r.email, r.amount, r.currency, r.invoice, r.note ?? '',
+  for (const c of lineContexts(table, history, invoices)) {
+    const r = c.row;
+    // A line the review missed is never auto-ok; code checks then apply on top of whatever the AI said.
+    const ai: LineReview = byLine.get(c.line)
+      ?? { line: c.line, verdict: 'review', flags: [{ type: 'unreviewed', reason: unreviewed, evidence: '' }], fix: null, fix_note: null };
+    const rv = guardLine(ai, c);
+    insert.run(id, c.line, r.name, r.email, r.amount, r.currency, r.invoice, r.note ?? '',
       rv.verdict, JSON.stringify(rv.flags), rv.fix ? JSON.stringify(rv.fix) : null, rv.fix_note);
   }
   return Response.json({ id });

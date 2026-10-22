@@ -18,3 +18,14 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
+      - key: APP_PASSWORD # shared sign-in password; give judges the same one in the Devpost testing instructions
+        sync: false
+      - key: DEMO # 1 = seed demo history, offer the Load demo button and default demo rules
+        value: "1"
+    # Before judging (Dec 1-15): switch plan to starter and uncomment, so SQLite survives deploys and restarts.
+    # disk:
+    #   name: data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    # and add:  - key: DB_PATH
+    #             value: /var/data/second-look.db
