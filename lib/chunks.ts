@@ -96,16 +96,19 @@ function finalize(batch: Batch, parts: Chunk[]) {
 
   const update = db().prepare('UPDATE lines SET verdict = ?, flags = ?, fix = ?, fix_note = ? WHERE batch_id = ? AND line = ? AND resend_of IS NULL');
   const counts = { block: 0, review: 0, ok: 0 };
+  let raised = 0;
   for (const c of contexts) {
     // Owner's rule: a line the AI did not answer is never ok; it needs the owner's tick.
     const reason = failedLines.has(c.line) ? 'AI review unavailable. Check this line yourself.' : 'The review returned nothing for this line.';
     const ai: LineReview = byLine.get(c.line) ?? { line: c.line, verdict: 'review', flags: [{ type: 'unreviewed', reason, evidence: '' }], fix: null, fix_note: null };
     const rv = guardLine(ai, c);
     counts[rv.verdict]++;
+    if (rv.verdict !== ai.verdict) raised++;
     update.run(rv.verdict, JSON.stringify(rv.flags), rv.fix ? JSON.stringify(rv.fix) : null, rv.fix_note, batch.id, c.line);
   }
   const failed = parts.filter(p => p.status === 'failed').length;
   const summary = `${contexts.length} lines reviewed in ${parts.length} parts: ${counts.block} block, ${counts.review} review, ${counts.ok} ok.`
+    + (raised ? ` Code checks raised ${raised} of them to block.` : '')
     + (failed ? ` ${failed} part(s) had no AI answer; their lines need your check.` : '');
   db().prepare("UPDATE batches SET status = 'review', summary = ? WHERE id = ?").run(summary, batch.id);
 }

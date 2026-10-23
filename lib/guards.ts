@@ -7,28 +7,31 @@ import type { Change, Fix, Flag, LineReview } from './review';
 const lc = (s?: string) => (s ?? '').trim().toLowerCase();
 const money = (s?: string) => (s && Number(s) > 0 ? Number(s) : NaN);
 
-function floor(c: LineContext): { flags: Flag[]; fix: Fix | null } {
+// Each floor finding names the AI flag type it matches, so a problem the AI already flagged is not shown twice.
+type Finding = Flag & { matches: string };
+
+function floor(c: LineContext): { flags: Finding[]; fix: Fix | null } {
   const r = c.row;
   if (c.before) {
     const inFlight = c.before.state === 'in_flight';
     return {
-      flags: [{ type: 'code_check', reason: inFlight ? 'This invoice already has a payout in flight.' : 'This invoice was already paid.',
+      flags: [{ type: 'code_check', matches: 'duplicate', reason: inFlight ? 'This invoice already has a payout in flight.' : 'This invoice was already paid.',
         evidence: `${c.before.invoice} ${c.before.date}` }],
       fix: { action: 'drop' },
     };
   }
   const inv = c.invoice;
   if (!inv) return { flags: [], fix: null };
-  const flags: Flag[] = [];
+  const flags: Finding[] = [];
   const changes: Change[] = [];
   if (!Number.isNaN(money(inv.amount)) && Number(r.amount) !== money(inv.amount)) {
-    flags.push({ type: 'code_check', reason: 'The amount differs from the invoice.', evidence: `${r.amount} vs ${inv.amount}` });
+    flags.push({ type: 'code_check', matches: 'amount', reason: 'The amount differs from the invoice.', evidence: `${r.amount} vs ${inv.amount}` });
     changes.push({ field: 'amount', value: money(inv.amount).toFixed(2) });
     if (inv.currency && inv.currency !== r.currency) changes.push({ field: 'currency', value: inv.currency });
   }
   const knownEmails = new Set(c.past.map(h => lc(h.email)));
   if (inv.payTo && lc(r.email) !== lc(inv.payTo) && !knownEmails.has(lc(r.email))) {
-    flags.push({ type: 'code_check', reason: 'The email matches neither the invoice nor past payouts.', evidence: `invoice pay-to ${inv.payTo}` });
+    flags.push({ type: 'code_check', matches: 'email_changed', reason: 'The email matches neither the invoice nor past payouts.', evidence: `invoice pay-to ${inv.payTo}` });
     changes.push({ field: 'email', value: inv.payTo });
   }
   return { flags, fix: changes.length ? { action: 'set', changes } : null };
@@ -62,7 +65,11 @@ export function guardLine(lr: LineReview, c: LineContext): LineReview {
 
   const f = floor(c);
   if (f.flags.length) {
-    if (verdict !== 'block') { verdict = 'block'; flags = [...flags, ...f.flags]; }
+    if (verdict !== 'block') {
+      verdict = 'block';
+      const already = new Set(flags.map(x => x.type));
+      flags = [...flags, ...f.flags.filter(x => !already.has(x.matches)).map(({ matches: _, ...flag }) => flag)];
+    }
     fix = fix ?? f.fix;
   }
   return { ...lr, verdict, flags, fix, fix_note };

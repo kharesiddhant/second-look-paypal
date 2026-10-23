@@ -3,6 +3,7 @@ import { requireOwner } from '@/lib/auth';
 import { paypal } from '@/lib/paypal';
 import { suggestEmail } from '@/lib/facts';
 import { refreshChunkedReview } from '@/lib/chunks';
+import { getProposals, getSteps, latestFollowUp, maybeAutoFollowUp } from '@/lib/agent';
 
 // Hours an item may stay unclaimed before the page nudges the owner. Set low (e.g. 0.05) for demos.
 const NUDGE_HOURS = Number(process.env.UNCLAIMED_NUDGE_HOURS ?? 72) || 72;
@@ -34,10 +35,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     }
   }
 
+  // Owner's rule: the follow-up agent runs once by itself when a sent batch is final and something did not arrive.
+  maybeAutoFollowUp(id);
+  const followUp = latestFollowUp(id);
+
   const lines = getLines(id);
   // Suggested resend emails for unclaimed or returned lines that were not resent yet.
   const resent = new Set(lines.map(l => l.resend_of).filter(Boolean));
-  const open = lines.filter(l => (l.status === 'UNCLAIMED' || l.status === 'RETURNED') && !resent.has(l.id));
+  const open = lines.filter(l => ['UNCLAIMED', 'RETURNED', 'FAILED', 'BLOCKED'].includes(l.status ?? '') && !resent.has(l.id));
   const suggestions: Record<number, { email: string; source: string } | null> = {};
   if (open.length) {
     const history = loadHistory();
@@ -54,5 +59,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     resent: [...resent],
     nudgeHours: NUDGE_HOURS,
     progress,
+    followUp: followUp ? { run: followUp, steps: getSteps(followUp.id) } : null,
+    proposals: getProposals(id),
   });
 }

@@ -62,6 +62,9 @@ async function main() {
   assert.deepStrictEqual(guardLine(ok(6), ctx[5]).fix,
     { action: 'set', changes: [{ field: 'amount', value: '300.00' }, { field: 'currency', value: 'EUR' }] });
   assert.equal(guardLine(ok(4), ctx[3]).verdict, 'ok');          // clean line untouched
+  const flaggedAmount = guardLine({ ...ok(2), verdict: 'review', flags: [{ type: 'amount', reason: 'x', evidence: 'y' }] }, ctx[1]);
+  assert.equal(flaggedAmount.verdict, 'block');                  // raised…
+  assert.deepStrictEqual(flaggedAmount.flags.map(f => f.type), ['amount']); // …without a second, duplicate flag
   assert.equal(guardLine({ ...ok(8), verdict: 'review' }, ctx[7]).verdict, 'review'); // missing invoice stays review
   const made = guardLine({ line: 2, verdict: 'block', flags: [], fix: { action: 'set', changes: [{ field: 'email', value: 'attacker@evil.com' }] }, fix_note: null }, ctx[1]);
   assert.match(made.fix_note ?? '', /attacker@evil\.com is not on the invoice or in past payouts/);
@@ -129,6 +132,19 @@ async function main() {
   assert.equal(big[62 - 1].verdict, 'review'); // line 62: failed chunk, needs the owner's tick
   assert.equal(big[63 - 1].verdict, 'block');  // line 63: failed chunk, but the floor still catches the 10x amount
   assert.match(getBatch('big')!.summary, /1 part\(s\) had no AI answer/);
+
+  // Agent draft tools (no model call): everyone = invoice senders, usual amount = invoice else last payout.
+  const { Draft } = await import('../lib/agent');
+  const d = new Draft(loadHistory(), demo.invoices);
+  assert.deepStrictEqual(d.addInvoiceSenders(['raj video']).added, 4);         // JD-10, OD-10, LW-10, SC-01
+  assert.throws(() => d.addPerson('Omar Dev'), /already in the draft/);
+  assert.match(d.changeAmount('Sofia Copy', { add: '50' }, 'bonus'), /800\.00 USD/);
+  assert.equal(d.lines.find(l => l.name === 'Lena Writer')?.currency, 'EUR');   // invoice currency
+  const h = new Draft(loadHistory(), []);
+  assert.match(h.addPerson('Omar Dev'), /850\.00 USD \(usual from last payout/);  // no invoice: last completed payout
+  assert.equal(h.lines[0].email, 'omar.dev@personal.example.com');            // email from history, never typed by the agent
+  assert.throws(() => h.addPerson('Omar'), /No invoice or past payout for "Omar".*Omar Dev/);
+  assert.deepStrictEqual(validatePayoutRows(d.table().rows), []);
 
   console.log('facts check passed');
 }

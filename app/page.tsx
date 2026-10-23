@@ -9,7 +9,18 @@ type Data = {
   batch: Batch; lines: Line[]; payouts: Payout[]; canSend: boolean;
   suggestions: Record<number, Suggestion>; resent: number[]; nudgeHours: number;
   progress: { done: number; total: number } | null;
+  followUp: AgentData | null;
+  proposals: Proposal[];
 };
+type AgentData = {
+  run: { id: number; batch_id: string | null; kind: string; status: string; instruction: string | null; summary: string | null };
+  steps: { tool: string; input: string; output: string; at: string }[];
+};
+type Proposal = {
+  id: number; line_id: number; action: 'resend' | 'cancel' | 'wait'; email: string | null; reason: string;
+  status: string; result: string | null; name: string; amount: string; currency: string; sent_to: string;
+};
+const DID_NOT_ARRIVE = ['UNCLAIMED', 'RETURNED', 'FAILED', 'BLOCKED'];
 type BatchSummary = { id: string; created_at: string; status: string; lines: number; unclaimed: number | null; pending: number | null };
 
 const FINAL = ['SUCCESS', 'DENIED', 'CANCELED'];
@@ -40,6 +51,7 @@ export default function Page() {
   const [rulesSaved, setRulesSaved] = useState(true);
   const [demo, setDemo] = useState(false);
   const [recent, setRecent] = useState<BatchSummary[]>([]);
+  const [draftRun, setDraftRun] = useState<AgentData | null>(null);
 
   useEffect(() => {
     getJson('/api/history').then(j => j && setHistory(j)).catch(e => setError(e.message));
@@ -100,6 +112,36 @@ export default function Page() {
     if (j) openBatch(j.id);
   }
 
+  // Draft with the agent: same form (invoices, notes), with a sentence instead of a CSV.
+  async function draftWithAgent(form: FormData) {
+    form.delete('csv');
+    const j = await call('/api/agent/draft', form);
+    if (j) setDraftRun({ run: { id: j.runId, batch_id: null, kind: 'draft', status: 'running', instruction: String(form.get('instruction')), summary: null }, steps: [] });
+  }
+
+  // Follow the draft run; when it has submitted a batch, open that batch.
+  useEffect(() => {
+    if (!draftRun || draftRun.run.status !== 'running') return;
+    const t = setInterval(async () => {
+      const j = await getJson(`/api/agent/runs/${draftRun.run.id}`).catch(() => null);
+      if (!j) return;
+      setDraftRun(j);
+      if (j.run.status !== 'running' && j.run.batch_id) openBatch(j.run.batch_id);
+    }, 2000);
+    return () => clearInterval(t);
+  }, [draftRun?.run.id, draftRun?.run.status]);
+
+  async function followUp() {
+    if (await call('/api/agent/followup', { batchId: id })) load();
+  }
+
+  async function decide(p: Proposal, decision: 'approve' | 'dismiss') {
+    const what = p.action === 'resend' ? `Cancel if needed and send ${p.amount} ${p.currency} to ${p.email}?` : p.action === 'cancel' ? `Cancel ${p.amount} ${p.currency} to ${p.sent_to}?` : 'Mark as seen?';
+    if (decision === 'approve' && !confirm(what)) return;
+    await call(`/api/proposals/${p.id}`, { decision });
+    load();
+  }
+
   async function saveRules() {
     if (await call('/api/rules', { rules }, 'PUT')) setRulesSaved(true);
   }
@@ -136,11 +178,12 @@ export default function Page() {
   const reviewing = data?.batch.status === 'reviewing';
   const pendingLines = data?.lines.filter(isPending) ?? [];
   const pending = !!data?.payouts.some(p => !FINAL.includes(p.status ?? ''));
+  const agentRunning = data?.followUp?.run.status === 'running';
   useEffect(() => {
-    if (!pending && !reviewing) return;
-    const t = setInterval(() => load(), reviewing ? 3000 : 5000);
+    if (!pending && !reviewing && !agentRunning) return;
+    const t = setInterval(() => load(), reviewing || agentRunning ? 3000 : 5000);
     return () => clearInterval(t);
-  }, [pending, reviewing, id]);
+  }, [pending, reviewing, agentRunning, id]);
 
   return (
     <main>
@@ -177,6 +220,13 @@ export default function Page() {
             </label>
             <br />
             <button type="submit" disabled={busy}>{busy ? 'Reviewing…' : 'Review batch'}</button>{' '}
+            <br />
+            <label>Or describe the payout run (no CSV needed)<br />
+              <textarea name="instruction" rows={2} cols={80} disabled={busy}
+                placeholder="e.g. Pay everyone who sent an invoice, except Raj. Add a $50 bonus for Maria." />
+            </label>
+            <br />
+            <button type="button" disabled={busy} onClick={e => draftWithAgent(new FormData(e.currentTarget.form!))}>Draft with agent</button>{' '}
             {demo && (
               <>
                 <button type="button" disabled={busy} onClick={() => { const f = new FormData(); f.set('demo', '1'); upload(f); }}>Load demo</button>{' '}
@@ -185,6 +235,8 @@ export default function Page() {
               </>
             )}
           </form>
+
+          {draftRun && <AgentLog title="Agent draft" data={draftRun} />}
 
           {recent.length > 0 && (
             <section>
@@ -278,7 +330,7 @@ export default function Page() {
                     <td>
                       {isPending(l) ? 'Sending… waiting for PayPal' : l.status ?? '–'}
                       {l.error && l.status !== 'RETURNED' && <p><small>{l.error}</small></p>}
-                      {(l.status === 'UNCLAIMED' || l.status === 'RETURNED') && !data.resent.includes(l.id) && (
+                      {DID_NOT_ARRIVE.includes(l.status ?? '') && !data.resent.includes(l.id) && (
                         <Unclaimed line={l} suggestion={data.suggestions[l.id] ?? null} nudgeHours={data.nudgeHours} busy={busy} onAct={unclaimed} />
                       )}
                       {data.resent.includes(l.id) && <p><small>Resent, see the line below</small></p>}
@@ -301,9 +353,54 @@ export default function Page() {
             </button>
           )}
           {!sent && !data.canSend && <p>Resolve every block line (fix or override) and tick every review line to approve.</p>}
+
+          {sent && (
+            <section>
+              <h2>Agent follow-up</h2>
+              <button disabled={busy || agentRunning} onClick={followUp}>{agentRunning ? 'Agent working…' : 'Follow up'}</button>
+              {data.followUp && <AgentLog title="Latest run" data={data.followUp} />}
+              {data.proposals.length > 0 && (
+                <ul>
+                  {data.proposals.map(p => (
+                    <li key={p.id}>
+                      <b>{p.action === 'resend' ? `Resend to ${p.email}` : p.action === 'cancel' ? 'Cancel' : 'Wait'}</b>: {p.name}, {p.amount} {p.currency}. {p.reason}{' '}
+                      {p.status === 'open' ? (
+                        <>
+                          <button disabled={busy} onClick={() => decide(p, 'approve')}>Approve</button>{' '}
+                          <button disabled={busy} onClick={() => decide(p, 'dismiss')}>Dismiss</button>
+                        </>
+                      ) : <small>({p.status}{p.result ? `: ${p.result}` : ''})</small>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
         </>
       )}
     </main>
+  );
+}
+
+// The agent's steps, live: every tool call with what it was asked and what it found.
+function AgentLog({ title, data }: { title: string; data: AgentData }) {
+  const { run, steps } = data;
+  return (
+    <section>
+      <h3>{title} · {run.status === 'running' ? 'working…' : run.status}</h3>
+      {run.instruction && <p>“{run.instruction}”</p>}
+      <ol>
+        {steps.map((s, i) => (
+          <li key={i}>
+            <details>
+              <summary><code>{s.tool}</code> {s.input !== '{}' && <small>{s.input}</small>}</summary>
+              <pre style={{ whiteSpace: 'pre-wrap' }}>{s.output}</pre>
+            </details>
+          </li>
+        ))}
+      </ol>
+      {run.summary && <p>{run.summary}</p>}
+    </section>
   );
 }
 

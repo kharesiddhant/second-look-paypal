@@ -33,6 +33,12 @@ CREATE TABLE IF NOT EXISTS lines (
 CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, type TEXT, received_at TEXT);
 -- Reviews keyed by a hash of everything sent to the model, so identical requests are not paid for twice.
 CREATE TABLE IF NOT EXISTS reviews (key TEXT PRIMARY KEY, review TEXT, created_at TEXT);
+-- Agent runs (lib/agent.ts): each tool call is a step, shown live; follow-up proposals wait for the owner.
+CREATE TABLE IF NOT EXISTS agent_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id TEXT, kind TEXT, status TEXT,
+  instruction TEXT, summary TEXT, created_at TEXT);
+CREATE TABLE IF NOT EXISTS agent_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, at TEXT, tool TEXT, input TEXT, output TEXT);
+CREATE TABLE IF NOT EXISTS proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, batch_id TEXT, line_id INTEGER,
+  action TEXT, email TEXT, reason TEXT, status TEXT, result TEXT);
 -- Big batches are reviewed in 50-line chunks in the background (lib/chunks.ts).
 CREATE TABLE IF NOT EXISTS review_chunks (
   batch_id TEXT, idx INTEGER, key TEXT, run_id TEXT, status TEXT, result TEXT, error TEXT, started_at TEXT,
@@ -57,6 +63,7 @@ db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
 // Each batch keeps the invoices and notes it was reviewed with (JSON).
 try { db.exec('ALTER TABLE batches ADD COLUMN invoices TEXT'); } catch {}
 try { db.exec('ALTER TABLE batches ADD COLUMN notes TEXT'); } catch {}
+try { db.exec('ALTER TABLE batches ADD COLUMN followed_up INTEGER DEFAULT 0'); } catch {}
 
 // Demo history is seeded only when DEMO=1, so a real owner's database never holds fake payouts.
 const { n } = db.prepare('SELECT COUNT(*) AS n FROM history').get() as { n: number };

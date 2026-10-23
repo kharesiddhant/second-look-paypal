@@ -117,3 +117,20 @@ export function historyStatus() {
   const synced = db().prepare("SELECT value FROM meta WHERE key = 'history_synced_at'").get() as { value: string } | undefined;
   return { counts: Object.fromEntries(counts.map(c => [c.source, c.n])), syncedAt: synced?.value ?? null };
 }
+
+// Read-only lookup for the follow-up agent: payouts to one email in the last `days` days (at most 31),
+// straight from PayPal Transaction Search. New payouts can take up to 3 hours to appear there.
+export async function searchPayoutsTo(email: string, days: number) {
+  const end = Date.now();
+  const found = new Map<string, TransactionDetails>();
+  await fetchRange(new TransactionSearchController(sdk()), end - Math.min(Math.max(days, 1), 31) * DAY, end, found);
+  return [...found.values()]
+    .filter(t => PAYOUT_CODES.includes(t.transactionInfo?.transactionEventCode ?? '') && t.payerInfo?.emailAddress?.toLowerCase() === email.toLowerCase())
+    .map(t => ({
+      date: t.transactionInfo?.transactionInitiationDate?.slice(0, 10),
+      amount: t.transactionInfo?.transactionAmount?.value?.replace('-', ''),
+      currency: t.transactionInfo?.transactionAmount?.currencyCode,
+      status: t.transactionInfo?.transactionStatus === 'S' ? 'completed' : t.transactionInfo?.transactionStatus === 'P' ? 'pending or unclaimed' : t.transactionInfo?.transactionStatus,
+      note: t.transactionInfo?.transactionNote,
+    }));
+}

@@ -33,6 +33,42 @@ Batches of up to 50 lines are reviewed in one call while the owner waits. Bigger
 
 Demo: **Load big demo** reviews 500 creator payouts (`day1-test/big-payout.csv`, answer key in `day1-test/big-answer-key.md`). Sending it creates 500 sandbox payouts to addresses without sandbox accounts, which come back unclaimed.
 
+## Cost per run (measured)
+
+Token counts are from the app's own usage logs on the demo data. Prices are list prices per million tokens: Claude Sonnet 5.5 $2 in / $10 out, Claude Haiku 5.5 $0.10 in / $0.50 out.
+
+### CSV reviews
+
+| Batch | Lines | Model calls | Tokens in | Tokens out | Cost | Per line |
+|---|---|---|---|---|---|---|
+| Demo (`payout.csv`) | 7 | 1 × Sonnet 5.5 | 2,470 | 862 | $0.0136 | $0.0019 |
+| Blind test (`blind-payout.csv`) | 8 | 1 × Sonnet 5.5 | 2,621 | 955 | $0.0148 | $0.0019 |
+| Big demo (`big-payout.csv`) | 500 | 10 × Sonnet 5.5 (50-line chunks) | 73,432 | 3,682 | $0.1837 | $0.0004 |
+| Reading one invoice PDF | – | 1 × Haiku 5.5 | ~2,210 | ~68 | $0.0003 | – |
+
+Each call has about 1,430 fixed input tokens (instructions and output schema) plus about 96–120 per line, so the cost per line falls as batches grow. Output stays small because clean lines come back as bare line numbers.
+
+### Agent drafts
+
+Instruction: "Pay everyone who sent an invoice, except Raj. Add a $50 bonus for Sofia." with 5 invoice PDFs attached.
+
+| Step | Model calls | Tokens in | Tokens out | Cost |
+|---|---|---|---|---|
+| Read 5 invoice PDFs | 5 × Haiku 5.5 | 11,044 | 341 | $0.0013 |
+| Agent builds the draft (tool loop) | 6 × Sonnet 5.5 | 11,176 | 572 | $0.0281 |
+| Review of the drafted batch | 1 × Sonnet 5.5 | 2,173 | 328 | $0.0076 |
+| **Total per draft** | **12** | **24,393** | **1,241** | **$0.0370** |
+
+The agent's tool loop is the largest part: every step resends the instructions, the tool definitions and the conversation so far. Its tools return short summaries rather than full line lists to keep that small.
+
+### How the review cost came down
+
+| Version | Tokens in | Tokens out | Cost per demo review |
+|---|---|---|---|
+| Raw files sent to the model, high effort | ~2,800 | ~2,700 | ~$0.033 |
+| Code-built facts, medium effort | 3,264 | 1,917 | ~$0.026 |
+| Compact facts, flagged lines only in the output | 2,470 | 862 | $0.014 |
+
 ## Setup
 
 TODO: Node 22+, `npm install`, `npm run dev`, sandbox accounts.
