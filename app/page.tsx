@@ -17,7 +17,7 @@ type AgentData = {
   steps: { tool: string; input: string; output: string; at: string }[];
 };
 type Proposal = {
-  id: number; line_id: number; action: 'resend' | 'cancel' | 'wait'; email: string | null; reason: string;
+  id: number; line_id: number; action: 'resend' | 'cancel' | 'wait' | 'needs_email'; email: string | null; reason: string;
   status: string; result: string | null; name: string; amount: string; currency: string; sent_to: string;
 };
 const DID_NOT_ARRIVE = ['UNCLAIMED', 'RETURNED', 'FAILED', 'BLOCKED'];
@@ -135,10 +135,12 @@ export default function Page() {
     if (await call('/api/agent/followup', { batchId: id })) load();
   }
 
-  async function decide(p: Proposal, decision: 'approve' | 'dismiss') {
-    const what = p.action === 'resend' ? `Cancel if needed and send ${p.amount} ${p.currency} to ${p.email}?` : p.action === 'cancel' ? `Cancel ${p.amount} ${p.currency} to ${p.sent_to}?` : 'Mark as seen?';
+  async function decide(p: Proposal, decision: 'approve' | 'dismiss', email?: string) {
+    const what = p.action === 'resend' ? `Cancel if needed and send ${p.amount} ${p.currency} to ${p.email}?`
+      : p.action === 'needs_email' ? `Send ${p.amount} ${p.currency} to ${email}?`
+      : p.action === 'cancel' ? `Cancel ${p.amount} ${p.currency} to ${p.sent_to}?` : 'Mark as seen?';
     if (decision === 'approve' && !confirm(what)) return;
-    await call(`/api/proposals/${p.id}`, { decision });
+    await call(`/api/proposals/${p.id}`, { decision, email });
     load();
   }
 
@@ -363,13 +365,16 @@ export default function Page() {
                 <ul>
                   {data.proposals.map(p => (
                     <li key={p.id}>
-                      <b>{p.action === 'resend' ? `Resend to ${p.email}` : p.action === 'cancel' ? 'Cancel' : 'Wait'}</b>: {p.name}, {p.amount} {p.currency}. {p.reason}{' '}
-                      {p.status === 'open' ? (
-                        <>
-                          <button disabled={busy} onClick={() => decide(p, 'approve')}>Approve</button>{' '}
-                          <button disabled={busy} onClick={() => decide(p, 'dismiss')}>Dismiss</button>
-                        </>
-                      ) : <small>({p.status}{p.result ? `: ${p.result}` : ''})</small>}
+                      <b>{p.action === 'resend' ? `Resend to ${p.email}` : p.action === 'cancel' ? 'Cancel'
+                        : p.action === 'needs_email' ? `Ask ${p.name} for a PayPal email` : 'Wait'}</b>: {p.name}, {p.amount} {p.currency}. {p.reason}{' '}
+                      {p.status !== 'open' ? <small>({p.status}{p.result ? `: ${p.result}` : ''})</small>
+                        : p.action === 'needs_email' ? <NeedsEmail busy={busy} onSend={email => decide(p, 'approve', email)} onDismiss={() => decide(p, 'dismiss')} />
+                        : (
+                          <>
+                            <button disabled={busy} onClick={() => decide(p, 'approve')}>Approve</button>{' '}
+                            <button disabled={busy} onClick={() => decide(p, 'dismiss')}>Dismiss</button>
+                          </>
+                        )}
                     </li>
                   ))}
                 </ul>
@@ -379,6 +384,18 @@ export default function Page() {
         </>
       )}
     </main>
+  );
+}
+
+// "Needs email" proposal: the owner types the address the recipient gave them, then resends.
+function NeedsEmail({ busy, onSend, onDismiss }: { busy: boolean; onSend: (email: string) => void; onDismiss: () => void }) {
+  const [email, setEmail] = useState('');
+  return (
+    <>
+      <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email from the recipient" />{' '}
+      <button disabled={busy || !email.trim()} onClick={() => onSend(email.trim())}>Resend</button>{' '}
+      <button disabled={busy} onClick={onDismiss}>Dismiss</button>
+    </>
   );
 }
 

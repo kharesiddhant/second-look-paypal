@@ -61,6 +61,15 @@ Instruction: "Pay everyone who sent an invoice, except Raj. Add a $50 bonus for 
 
 The agent's tool loop is the largest part: every step resends the instructions, the tool definitions and the conversation so far. Its tools return short summaries rather than full line lists to keep that small.
 
+### Agent follow-ups
+
+After the demo batch was sent, one payout (Priya, no PayPal account) came back unclaimed.
+
+| Run | Steps | Model calls | Tokens in | Tokens out | Cost |
+|---|---|---|---|---|---|
+| Automatic, when the batch was final | list problems → recipient lookup → live PayPal status → PayPal Transaction Search → propose cancel | 5 × Sonnet 5.5 | 10,460 | 777 | $0.0287 |
+| Owner pressed Follow up after the cancel | list problems → recipient lookup → live PayPal status → propose wait | 4 × Sonnet 5.5 | 7,285 | 659 | $0.0212 |
+
 ### How the review cost came down
 
 | Version | Tokens in | Tokens out | Cost per demo review |
